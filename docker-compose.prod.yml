@@ -1,0 +1,41 @@
+version: "3.9"
+
+# Production overrides — use with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    restart: always
+    environment:
+      POSTGRES_SSLMODE: require
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    restart: always
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1
+      --loglevel warning
+
+  backend:
+    build:
+      target: production
+    restart: always
+    volumes: []
+    command: ["/app/server"]
+    environment:
+      APP_ENV: production
+      GIN_MODE: release
+
+  frontend:
+    build:
+      target: production
+    restart: always
+    volumes: []
+    ports:
+      - "80:80"
+      - "443:443"
