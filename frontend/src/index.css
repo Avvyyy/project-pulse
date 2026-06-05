@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  /* ── Canvas & surface palette ─────────────────────────────── */
+  --color-canvas:    #0f1117;
+  --color-surface:   #1a1d23;
+  --color-surface-2: #232730;
+  --color-edge:      #2d3139;
+
+  /* ── Accent ───────────────────────────────────────────────── */
+  --color-accent:       #6366f1;
+  --color-accent-hover: #4f46e5;
+
+  /* ── Font ────────────────────────────────────────────────── */
+  --font-family-sans: monospace;
+  --font-family-mono: monospace;
+}
+
+@layer base {
+  html, body { @apply bg-canvas text-slate-200; margin: 0; }
+  input, textarea, select, button { font-family: inherit; }
+  :focus-visible { @apply outline-2 outline-offset-2 outline-accent; }
+}

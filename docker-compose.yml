@@ -7,18 +7,18 @@ services:
     container_name: pulse_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-pulse}
+      POSTGRES_USER:     ${POSTGRES_USER:-pulse}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pulse_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-pulse_db}
+      POSTGRES_DB:       ${POSTGRES_DB:-pulse_db}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulse}"]
+      test:     ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulse}"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout:  5s
+      retries:  5
 
   # ── Redis ──────────────────────────────────────────────────────────────────
   redis:
@@ -31,54 +31,36 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:     ["CMD", "redis-cli", "ping"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout:  5s
+      retries:  5
 
-  # ── Zookeeper (required by Kafka) ──────────────────────────────────────────
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.0
-    container_name: pulse_zookeeper
+  # ── Elasticsearch ──────────────────────────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: pulse_elasticsearch
     restart: unless-stopped
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    volumes:
-      - zookeeper_data:/var/lib/zookeeper/data
-      - zookeeper_log:/var/lib/zookeeper/log
-
-  # ── Kafka ──────────────────────────────────────────────────────────────────
-  kafka:
-    image: confluentinc/cp-kafka:7.6.0
-    container_name: pulse_kafka
-    restart: unless-stopped
-    depends_on:
-      - zookeeper
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
     ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      - "9200:9200"
     volumes:
-      - kafka_data:/var/lib/kafka/data
+      - elasticsearch_data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      test:     ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -qv '\"status\":\"red\"'"]
       interval: 30s
-      timeout: 10s
-      retries: 5
+      timeout:  10s
+      retries:  5
 
-  # ── Backend (Go API) ───────────────────────────────────────────────────────
+  # ── Backend (NestJS) ───────────────────────────────────────────────────────
   backend:
     build:
-      context: ./backend
+      context:    .
       dockerfile: Dockerfile
-      target: development
+      target:     backend-dev
     container_name: pulse_backend
     restart: unless-stopped
     depends_on:
@@ -86,26 +68,26 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      kafka:
-        condition: service_started
-    env_file:
-      - .env
+      elasticsearch:
+        condition: service_healthy
+    env_file: .env
     environment:
-      POSTGRES_HOST: postgres
-      REDIS_HOST: redis
-      KAFKA_BROKERS: kafka:29092
+      # Override hosts to use service names inside Docker
+      DATABASE_URL:        postgresql://${POSTGRES_USER:-pulse}:${POSTGRES_PASSWORD:-pulse_secret}@postgres:5432/${POSTGRES_DB:-pulse_db}?sslmode=disable
+      REDIS_HOST:          redis
+      ELASTICSEARCH_URL:   http://elasticsearch:9200
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
       - ./backend:/app
-    command: ["air", "-c", ".air.toml"]
+      - /app/node_modules  # keep container node_modules isolated
 
-  # ── Frontend (React) ───────────────────────────────────────────────────────
+  # ── Frontend (React + Vite) ────────────────────────────────────────────────
   frontend:
     build:
-      context: ./frontend
+      context:    .
       dockerfile: Dockerfile
-      target: development
+      target:     frontend-dev
     container_name: pulse_frontend
     restart: unless-stopped
     depends_on:
@@ -121,6 +103,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  kafka_data:
-  zookeeper_data:
-  zookeeper_log:
+  elasticsearch_data:

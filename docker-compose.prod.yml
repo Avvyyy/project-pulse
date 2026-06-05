@@ -23,17 +23,20 @@ services:
 
   backend:
     build:
-      target: production
+      target: backend-prod
     restart: always
     volumes: []
-    command: ["/app/server"]
     environment:
       APP_ENV: production
-      GIN_MODE: release
+
+  elasticsearch:
+    environment:
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - xpack.security.enabled=true
 
   frontend:
     build:
-      target: production
+      target: frontend-prod
     restart: always
     volumes: []
     ports:
