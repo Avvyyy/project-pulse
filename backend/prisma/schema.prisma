@@ -1,0 +1,261 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API Keys
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ApiKey {
+  id         String    @id @default(uuid()) @db.Uuid
+  name       String    @db.VarChar(100)
+  keyHash    String    @unique @map("key_hash") @db.Char(64)
+  keyPrefix  String    @map("key_prefix") @db.VarChar(12)
+  rateLimit  Int       @default(1000) @map("rate_limit")
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz
+  events     Event[]
+
+  @@index([isActive])
+  @@map("api_keys")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Error Groups
+//
+// An error group represents a unique class of failure, identified by a
+// deterministic fingerprint. Multiple Event rows map to one ErrorGroup.
+//
+// Fingerprint algorithm:
+//   SHA-256( service + ":" + level + ":" + normalise(message) )
+// where normalise() strips UUIDs, hex IDs, and bare integers so that
+// "user 1234 not found" and "user 5678 not found" hash to the same value.
+//
+// Scalability note:
+//   occurrence_count is incremented via an atomic ON CONFLICT DO UPDATE so
+//   concurrent inserts do not lose counts. At very high write rates (>10k/s
+//   on a single group) consider a Redis counter with periodic flush instead.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ErrorGroup {
+  id              String    @id @default(uuid()) @db.Uuid
+  fingerprint     String    @unique @db.Char(64)
+  service         String    @db.VarChar(100)
+  environment     String    @db.VarChar(20)
+  level           String    @db.VarChar(10)
+  title           String    @db.VarChar(500) // first-occurrence message, truncated
+  occurrenceCount Int       @default(1) @map("occurrence_count")
+  firstSeenAt     DateTime  @map("first_seen_at") @db.Timestamptz
+  lastSeenAt      DateTime  @map("last_seen_at") @db.Timestamptz
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz
+  // open | resolved | ignored
+  status          String    @default("open") @db.VarChar(20)
+
+  events      Event[]
+  incidents   IncidentErrorGroup[]
+
+  // Most queries filter by (service, environment, status) or sort by lastSeenAt.
+  @@index([service, environment, status])
+  @@index([lastSeenAt(sort: Desc)])
+  @@index([status, level])
+  @@map("error_groups")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Events
+//
+// Scalability notes:
+//   1. UUID v4 primary keys cause B-tree page fragmentation under heavy insert
+//      load. Migrate to ULIDs or UUID v7 once Prisma supports them, or add an
+//      internal BIGSERIAL surrogate key for clustered access.
+//
+//   2. At scale (>1 M rows) partition this table by timestamp using Postgres
+//      PARTITION BY RANGE (timestamp). Prisma does not manage partitions, so
+//      create child tables in raw SQL migrations. Monthly partitions give ~30-day
+//      fast DROP PARTITION for data retention instead of slow DELETE.
+//
+//   3. Avoid SELECT COUNT(*) for dashboard totals — it scans the full table.
+//      Use the occurrence_count on ErrorGroup or Redis counters instead.
+//
+//   4. The composite indexes below cover the three highest-traffic query shapes:
+//         WHERE service = ? ORDER BY timestamp DESC
+//         WHERE level = ? AND timestamp BETWEEN ? AND ?
+//         WHERE error_group_id = ?
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Event {
+  id           String      @id @default(uuid()) @db.Uuid
+  service      String      @db.VarChar(100)
+  environment  String      @db.VarChar(20)
+  level        String      @db.VarChar(10)
+  message      String
+  stackTrace   String?     @map("stack_trace") // optional raw stack trace
+  timestamp    DateTime    @db.Timestamptz
+  metadata     Json?       @default("{}")
+  // Denormalised fingerprint — avoids a JOIN when fetching the group for a page of events
+  fingerprint  String?     @db.Char(64)
+  errorGroupId String?     @map("error_group_id") @db.Uuid
+  errorGroup   ErrorGroup? @relation(fields: [errorGroupId], references: [id])
+  apiKeyId     String      @map("api_key_id") @db.Uuid
+  apiKey       ApiKey      @relation(fields: [apiKeyId], references: [id])
+  receivedAt   DateTime    @map("received_at") @db.Timestamptz
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  // ── Pipeline enrichment fields ──────────────────────────────────────────
+  // Stored as columns for SQL-level filtering; also present in ES for search.
+  severityScore       Int?     @map("severity_score")        // 0–5
+  errorType           String?  @map("error_type") @db.VarChar(100)
+  httpStatusCode      Int?     @map("http_status_code")
+  processingLatencyMs Int?     @map("processing_latency_ms")
+  tags                String[] // Postgres TEXT[] array
+  parsedStack         Json?    @map("parsed_stack")          // StackFrame[]
+
+  @@index([service, timestamp(sort: Desc)])
+  @@index([level, timestamp(sort: Desc)])
+  @@index([environment, timestamp(sort: Desc)])
+  @@index([errorGroupId])
+  @@index([apiKeyId])
+  @@index([tags])   // GIN index applied in migration SQL
+  @@index([errorType])
+  @@map("events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Service Registry
+//
+// Auto-populated on first ingestion. Provides a fast "which services exist?"
+// lookup without scanning the events table.
+//
+// Scalability note:
+//   event_count and error_count are approximations updated asynchronously
+//   (fire-and-forget upsert). They may lag by a few seconds but avoid
+//   contention on a hot counter row.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Service {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique @db.VarChar(100)
+  firstSeenAt DateTime @map("first_seen_at") @db.Timestamptz
+  lastSeenAt  DateTime @map("last_seen_at") @db.Timestamptz
+  eventCount  BigInt   @default(0) @map("event_count")
+  errorCount  BigInt   @default(0) @map("error_count")
+
+  @@map("services")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Environment Registry
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Environment {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique @db.VarChar(20)
+  firstSeenAt DateTime @map("first_seen_at") @db.Timestamptz
+  lastSeenAt  DateTime @map("last_seen_at") @db.Timestamptz
+
+  @@map("environments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alerts
+//
+// An alert is a standing rule checked against incoming events or aggregates.
+//
+// condition JSON shape:
+//   { "type": "threshold",    "metric": "error_count", "threshold": 10, "windowSeconds": 300 }
+//   { "type": "new_error_group" }
+//   { "type": "recurrence",   "minutes": 60 }
+//   { "type": "spike",        "multiplier": 3, "baselineWindowSeconds": 3600 }
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Alert {
+  id          String         @id @default(uuid()) @db.Uuid
+  name        String         @db.VarChar(255)
+  description String?
+  service     String?        @db.VarChar(100) // null = match all services
+  environment String?        @db.VarChar(20)  // null = match all environments
+  level       String?        @db.VarChar(10)  // null = match all levels
+  condition   Json
+  isActive    Boolean        @default(true) @map("is_active")
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  triggers    AlertTrigger[]
+
+  @@index([isActive])
+  @@map("alerts")
+}
+
+model AlertTrigger {
+  id          String    @id @default(uuid()) @db.Uuid
+  alertId     String    @map("alert_id") @db.Uuid
+  alert       Alert     @relation(fields: [alertId], references: [id])
+  triggeredAt DateTime  @default(now()) @map("triggered_at") @db.Timestamptz
+  resolvedAt  DateTime? @map("resolved_at") @db.Timestamptz
+  // { error_count: 50, window: "5m", sample_event_ids: [...] }
+  context     Json?
+
+  @@index([alertId, triggeredAt(sort: Desc)])
+  @@map("alert_triggers")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Incidents
+//
+// An incident is a manually or automatically declared outage. It links one or
+// more ErrorGroups and carries a full chronological timeline of state changes.
+//
+// Relationship to ErrorGroup: many-to-many via IncidentErrorGroup.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Incident {
+  id          String               @id @default(uuid()) @db.Uuid
+  title       String               @db.VarChar(255)
+  description String?
+  // open | investigating | resolved
+  status      String               @default("open") @db.VarChar(20)
+  // critical | high | medium | low
+  severity    String               @db.VarChar(10)
+  service     String?              @db.VarChar(100)
+  environment String?              @db.VarChar(20)
+  openedAt    DateTime             @default(now()) @map("opened_at") @db.Timestamptz
+  resolvedAt  DateTime?            @map("resolved_at") @db.Timestamptz
+
+  errorGroups IncidentErrorGroup[]
+  timeline    IncidentTimeline[]
+
+  @@index([status, openedAt(sort: Desc)])
+  @@index([service, openedAt(sort: Desc)])
+  @@map("incidents")
+}
+
+model IncidentErrorGroup {
+  incidentId   String     @map("incident_id") @db.Uuid
+  errorGroupId String     @map("error_group_id") @db.Uuid
+  incident     Incident   @relation(fields: [incidentId], references: [id])
+  errorGroup   ErrorGroup @relation(fields: [errorGroupId], references: [id])
+  linkedAt     DateTime   @default(now()) @map("linked_at") @db.Timestamptz
+
+  @@id([incidentId, errorGroupId])
+  @@map("incident_error_groups")
+}
+
+model IncidentTimeline {
+  id         String   @id @default(uuid()) @db.Uuid
+  incidentId String   @map("incident_id") @db.Uuid
+  incident   Incident @relation(fields: [incidentId], references: [id])
+  // opened | status_change | comment | error_linked | resolved | severity_change
+  type       String   @db.VarChar(50)
+  message    String
+  actor      String?  @db.VarChar(255)
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz
+
+  @@index([incidentId, occurredAt(sort: Desc)])
+  @@map("incident_timeline")
+}
