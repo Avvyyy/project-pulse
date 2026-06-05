@@ -4,123 +4,258 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**project-pulse** is a full-stack application built with:
-- **Backend**: Go (module `github.com/favouruzochukwu/project-pulse`)
-- **Frontend**: React 18 + TypeScript + Vite
-- **Database**: PostgreSQL 16 (raw SQL via `pgx/v5` — no ORM)
-- **Cache**: Redis 7
-- **Message queue**: Kafka (Confluent Platform 7.6, managed via Zookeeper)
+**project-pulse** is a full-stack observability platform (Sentry + Datadog–style) built with:
 
-Everything runs via Docker Compose. Go and Node are not required locally.
+| Layer | Technology |
+|---|---|
+| Backend API | NestJS 10 + TypeScript |
+| Database | PostgreSQL 16 via Prisma ORM (no raw SQL except aggregations) |
+| Cache / Queue | Redis 7 — rate limiting (ioredis) + job queues (BullMQ) |
+| Search | Elasticsearch 8 — event full-text search + ILM |
+| Scheduler | @nestjs/schedule — alert evaluation every 60 s |
+| Frontend | React 18 + TypeScript + Vite + Tailwind CSS v4 |
+| CSS | Tailwind v4 via `@tailwindcss/vite` plugin — no PostCSS config needed |
+| State mgmt | Zustand |
+| Charts | Recharts |
+
+Everything runs via Docker Compose from a single root `Dockerfile`. Node is **not** required locally.
+
+---
 
 ## Commands
 
-All day-to-day operations go through the root `Makefile`. The Makefile sources `.env` automatically — copy `.env.example` to `.env` before running anything.
+Copy `.env.example` → `.env` before running anything.
 
 ```bash
 cp .env.example .env
 
-make up              # start all services (postgres, redis, kafka, backend, frontend)
+make up              # start all services (dev)
 make down            # stop all services
-make build           # rebuild images from scratch
+make build           # rebuild images from scratch (use after adding npm packages)
 make logs            # tail all logs
 make logs-backend    # tail backend only
 make ps              # container status
+make api-health      # curl /api/v1/health
 ```
 
-### Database migrations
-
-Migrations live in `backend/migrations/` as numbered `.sql` files managed by `golang-migrate`.
+### Database / Prisma
 
 ```bash
-make migrate-up                        # apply all pending migrations
-make migrate-down                      # roll back one migration
-make migrate-create name=create_users  # scaffold a new migration pair
+make migrate-create name=add_index   # scaffold a new migration
+make migrate-up                      # apply pending migrations
+make migrate-down                    # reset DB (dev only)
+make prisma-generate                 # regenerate Prisma client after schema change
+make prisma-studio                   # open Prisma Studio on :5555
 ```
 
-### Testing & linting (run inside the backend container)
+Schema: `backend/prisma/schema.prisma`. Migrations: `backend/prisma/migrations/`.
+
+### Testing & Linting
 
 ```bash
-make test        # go test ./... -v -race with coverage output
-make test-cover  # open HTML coverage report
-make lint        # golangci-lint run ./...
+make test        # jest (inside backend container)
+make test-cover  # jest --coverage
+make lint        # eslint
+
+# Single test file:
+docker compose exec backend npm run test -- --testPathPattern=alerts
 ```
 
-To run a single test package or function directly:
+### Utilities
 
 ```bash
-docker compose exec backend go test ./internal/application/usecase/... -run TestCreateUser -v
+make shell-backend   # sh inside the NestJS container
+make shell-frontend  # sh inside the Vite container
+make shell-db        # psql into pulse_db
+make redis-cli       # redis-cli session
+make es-health       # curl Elasticsearch cluster health
 ```
 
-### Utility shells
-
-```bash
-make shell-backend  # sh inside the Go container
-make shell-db       # psql into pulse_db
-make redis-cli      # redis-cli session
-```
-
-### Production
-
-```bash
-make prod-up    # docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-make prod-down
-```
+---
 
 ## Architecture
 
-The backend follows **Clean Architecture** with a strict one-way dependency rule:
+### Request flow
 
 ```
-Domain  ←  Application  ←  Infrastructure
-                         ←  Interfaces (HTTP)
+Browser
+  └─► Vite dev server :3000 (/api/* proxied to backend:8080)
+        └─► NestJS :8080
+              ├─► IP rate-limit middleware (300 req/min per IP, Redis)
+              ├─► ApiKeyGuard (SHA-256 hash → Redis cache → Postgres)
+              │     └─► Brute-force lockout (20 failures / 5 min per IP)
+              ├─► RateLimitGuard (per API key, fixed 60 s window)
+              ├─► ValidationPipe (whitelist + forbidNonWhitelisted)
+              ├─► AuditInterceptor (POST/PATCH/DELETE → structured log)
+              └─► Route handler
 ```
 
-No outer layer may be imported by an inner one.
+### Event ingestion pipeline
 
-### Backend layer breakdown
+```
+POST /api/v1/ingest  (X-Api-Key)
+  → EventsController (validates DTO)
+  → EventsProducer   (BullMQ queue "event-ingestion")
+  → HTTP 202 Accepted
 
-| Layer | Path | Responsibility |
-|---|---|---|
-| **Domain** | `internal/domain/` | Entities, repository interfaces, domain errors. Zero external deps. |
-| **Application** | `internal/application/` | Use cases (orchestrate domain + call repository ports), DTOs. |
-| **Infrastructure** | `internal/infrastructure/` | Concrete implementations: PostgreSQL repos, Redis cache, Kafka producer/consumer, Viper config. |
-| **Interfaces** | `internal/interfaces/http/` | Gin handlers, middleware, router wiring. Translates HTTP ↔ application DTOs. |
-| **Shared** | `pkg/` | Logger (zap), validator wrapper, HTTP response helpers. No business logic. |
-| **Entry point** | `cmd/api/main.go` | Wires everything together via dependency injection (manual, no DI framework). |
+BullMQ worker (EventsProcessor, concurrency=10)
+  → NormalizationStage  — lowercase, PII strip, field length caps
+  → EnrichmentStage     — errorType, severityScore, httpStatusCode, tags, parsedStack
+  → FingerprintStage    — SHA-256(service:level:normalised_message)
+  → RoutingStage        — drop stale/future events; choose postgres + ES destinations
+  → StorageService      — prisma.event.create + ErrorGroup upsert (ON CONFLICT atomic)
+  → SearchService       — ES bulk index (events + error_groups indices)
+```
 
-### Key conventions
+### Alert evaluation loop
 
-- **Repository pattern**: domain layer defines interfaces (`UserRepository`, etc.); infrastructure layer implements them. Use cases receive interfaces, never concrete types.
-- **DTOs live in application**: request/response shapes used by handlers are defined in `internal/application/dto/`, not in handlers.
-- **No ORM**: all SQL is written by hand using `pgx/v5`. Use `pgx.Row` / `pgx.Rows` and struct scanning.
-- **Migrations are append-only**: never edit an existing migration file; always create a new numbered pair.
-- **Structured logging**: use `pkg/logger` (wraps `go.uber.org/zap`). Never use `fmt.Println` in production paths.
-- **Config via Viper + env**: all configuration is read from environment variables (mapped in `internal/infrastructure/config/`). `.env` is loaded at startup in development; in production, inject env vars directly.
-- **JWT**: access tokens (15 min TTL) + refresh tokens (7 days). Secrets are separate (`JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET`).
-- **Kafka internal listener**: within Docker Compose, services connect to Kafka on `kafka:29092` (the `PLAINTEXT_INTERNAL` listener). The `localhost:9092` address is only for external tools on the host.
+```
+@Cron(EVERY_MINUTE)  AlertEvaluatorService.evaluateAll()
+  → fetch all isActive=true alerts
+  → for each: dispatch by condition.type
+      threshold      → COUNT(events) in window vs threshold
+      spike          → current window / baseline window ≥ multiplier
+      recurrence     → open ErrorGroups seen >1× in last N minutes
+      new_error_group → ErrorGroups created since last check (in-memory timestamp)
+  → if condition met  && no open trigger  → create AlertTrigger
+  → if condition clear && open trigger    → auto-resolve (set resolvedAt)
+```
+
+### Module layout
+
+```
+backend/src/
+  config/              # Typed config via @nestjs/config
+  common/
+    filters/           # HttpExceptionFilter — uniform { success, error } envelope
+    guards/            # ApiKeyGuard, RateLimitGuard, AdminGuard (timing-safe)
+    interceptors/      # IngestionLoggerInterceptor, AuditInterceptor
+  prisma/              # @Global PrismaModule + PrismaService
+  redis/               # @Global RedisModule + RedisService
+                       #   → checkRateLimit, checkIpRateLimit,
+                       #   → cacheApiKey, recordFailedAuth, isAuthBlocked
+  search/              # @Global SearchModule + SearchService (ES index + ILM)
+  storage/             # StorageService — event + error-group persistence
+  pipeline/            # 4-stage processing pipeline (normalise → enrich → fingerprint → route)
+  events/              # Ingestion controller + BullMQ producer/processor
+  api-keys/            # Admin CRUD: POST/GET/DELETE /admin/api-keys
+  query/               # Search endpoints: GET /search/events|groups (Elasticsearch)
+  incidents/           # Incident CRUD + timeline + error-group linking + frequency chart
+  alerts/              # Alert rules CRUD + AlertEvaluatorService (scheduler)
+  dashboard/           # Single GET /dashboard?period=24h|7d|30d — all KPIs in one call
+  health/              # GET /health — Postgres + Redis + ES liveness
+```
 
 ### Frontend structure
 
 ```
 frontend/src/
-  api/        # axios client + typed endpoint functions
-  components/ # reusable UI components
-  features/   # feature-sliced modules (each owns its own components, hooks, types)
-  hooks/      # shared custom hooks
-  store/      # Zustand slices
-  types/      # shared TypeScript types
-  utils/      # pure utility functions
+  api/          # axios client (/api/v1 base) + typed functions per domain
+  components/   # Reusable UI: Card, NavBar, KpiCard, VolumeChart,
+                #   StatusBadge, SeverityBadge, AlertStateBadge,
+                #   IncidentTimeline, RelatedErrors, FrequencyChart,
+                #   AffectedServices, ConditionSummary, ConditionBuilder,
+                #   TriggerHistory, PageState
+  features/
+    dashboard/  # DashboardPage — KPI cards, volume chart, service health,
+                #   top error groups, incident summary, top error types
+    incidents/  # IncidentListPage, IncidentDetailPage
+    alerts/     # AlertListPage, AlertDetailPage
+  store/        # Zustand slices: incidentStore, alertStore
+  types/        # Shared TypeScript types (Incident, Alert, AlertCondition…)
+  utils/        # time.ts (relativeTime, formatDateTime…), colors.ts (LEVEL_HEX…)
 ```
 
-The frontend talks to the backend at `VITE_API_BASE_URL` (defaults to `http://localhost:8080/api/v1`). Server state is managed with TanStack Query; client-only state with Zustand.
+### Frontend routes
+
+| Path | Page |
+|---|---|
+| `/` | → redirect to `/dashboard` |
+| `/dashboard` | Analytics dashboard (auto-refreshes every 60 s) |
+| `/incidents` | Incident list with create modal |
+| `/incidents/:id` | Incident detail — timeline, frequency chart, linked errors |
+| `/alerts` | Alert rules list with create modal |
+| `/alerts/:id` | Alert detail — condition, trigger history, edit modal |
+
+---
+
+## Key conventions
+
+- **No raw SQL** except Prisma `$queryRaw` for aggregations (`date_trunc`, `COUNT FILTER`). All `$queryRaw` calls use `Prisma.sql` tagged templates — never string concatenation.
+- **Global modules**: `PrismaModule`, `RedisModule`, `SearchModule` are `@Global()`. Import once in `AppModule`; inject everywhere.
+- **Guards & DI**: guards must be listed in the `providers` array of the module where they're used.
+- **DTOs**: `class-validator` decorators + global `ValidationPipe(whitelist: true, forbidNonWhitelisted: true)`.
+- **API keys**: `pk_<64 hex>`. SHA-256 hashed at rest. Redis-cached 5 min. Full key shown once at creation.
+- **Admin routes**: require `X-Admin-Secret` header (timing-safe comparison via `timingSafeEqual`).
+- **Rate limits**: two layers — IP (300 req/min via middleware) and per-API-key (configurable, default 1 000 req/min).
+- **Tailwind**: v4 — custom colours defined in `src/index.css` under `@theme`. No `tailwind.config.js`.
+- **Font**: whole app uses monospace — set on `html, body` in `@layer base`.
+
+---
 
 ## Infrastructure topology
 
 ```
-Host (browser) → Frontend :3000 → Backend :8080 → PostgreSQL :5432
-                                              → Redis :6379
-                                              → Kafka :9092 (host) / :29092 (internal)
+Production:
+  Internet → nginx :80/:443
+               ├─► /api/* → NestJS :8080 → PostgreSQL :5432
+               │                        → Redis     :6379
+               │                        → Elasticsearch :9200
+               └─► /*     → React SPA (static files)
+
+Development (Docker Compose):
+  Browser → Vite :3000 (/api/* proxied) → NestJS :8080
+                                        → PostgreSQL :5432
+                                        → Redis     :6379
+                                        → Elasticsearch :9200
 ```
 
-The backend container's `POSTGRES_HOST`, `REDIS_HOST`, and `KAFKA_BROKERS` are overridden in `docker-compose.yml` to use service names (`postgres`, `redis`, `kafka:29092`) regardless of what `.env` says.
+Docker Compose overrides `DATABASE_URL`, `REDIS_HOST`, and `ELASTICSEARCH_URL` to use Docker service names regardless of `.env`.
+
+---
+
+## Docker
+
+Single root `Dockerfile` with 8 named stages:
+
+| Stage | Purpose |
+|---|---|
+| `backend-base` | `npm ci` for backend |
+| `backend-dev` | dev server with hot-reload (`nest start --watch`) |
+| `backend-builder` | production build |
+| `backend-prod` | minimal node image, runs `node dist/main` |
+| `frontend-base` | `npm install` for frontend |
+| `frontend-dev` | Vite dev server |
+| `frontend-builder` | `npm run build` (Vite static output) |
+| `frontend-prod` | nginx serving static files + `/api/*` proxy |
+
+```bash
+# Development
+make up       # docker compose up -d (targets: backend-dev, frontend-dev)
+
+# Production
+make prod-up  # docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+              # (targets: backend-prod, frontend-prod)
+```
+
+---
+
+## CI/CD
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on push to `main`/`develop`:
+
+1. **backend** job — `npm ci` → Prisma generate + migrate → lint → test (with Postgres + Redis services)
+2. **frontend** job — `npm ci` → `tsc --noEmit` → `vite build`
+3. **docker** job (main branch only) — builds and pushes `backend-prod` + `frontend-prod` images to GitHub Container Registry
+
+---
+
+## Security notes
+
+- `ADMIN_SECRET` must not be the placeholder in `APP_ENV=production` (startup throws if so).
+- API key brute-force: 20 failed attempts per IP per 5-min window → 15-min lockout.
+- IP rate limit: 300 req/min per IP (Express middleware, before all guards).
+- Admin guard uses constant-time comparison (`timingSafeEqual` with padding) against timing attacks.
+- `ValidationPipe(whitelist: true)` strips and rejects unknown request fields.
+- All `$queryRaw` queries use Prisma parameterised templates — no SQL injection surface.
+- Audit log: every POST/PATCH/DELETE is logged with method, path, status, latency, IP, actor.
