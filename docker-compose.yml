@@ -7,18 +7,18 @@ services:
     container_name: pulse_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-pulse}
+      POSTGRES_USER:     ${POSTGRES_USER:-pulse}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pulse_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-pulse_db}
+      POSTGRES_DB:       ${POSTGRES_DB:-pulse_db}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulse}"]
+      test:     ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulse}"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout:  5s
+      retries:  5
 
   # ── Redis ──────────────────────────────────────────────────────────────────
   redis:
@@ -31,15 +31,15 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:     ["CMD", "redis-cli", "ping"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout:  5s
+      retries:  5
 
-  # ── Zookeeper (required by Kafka) ──────────────────────────────────────────
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.0
-    container_name: pulse_zookeeper
+  # ── Elasticsearch ──────────────────────────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: pulse_elasticsearch
     restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
@@ -51,9 +51,9 @@ services:
   # ── Backend (Go + Gin) ─────────────────────────────────────────────────────
   backend:
     build:
-      context: ./backend
+      context:    .
       dockerfile: Dockerfile
-      target: development
+      target:     backend-dev
     container_name: pulse_backend
     restart: unless-stopped
     depends_on:
@@ -61,10 +61,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      kafka:
-        condition: service_started
-    env_file:
-      - .env
+      elasticsearch:
+        condition: service_healthy
+    env_file: .env
     environment:
       DATABASE_URL:      postgresql://${POSTGRES_USER:-pulse}:${POSTGRES_PASSWORD:-pulse_secret}@postgres:5432/${POSTGRES_DB:-pulse_db}?sslmode=disable
       REDIS_HOST:        redis
@@ -76,12 +75,12 @@ services:
       # Keep the module cache across rebuilds
       - go_pkg_cache:/root/go/pkg/mod
 
-  # ── Frontend (React) ───────────────────────────────────────────────────────
+  # ── Frontend (React + Vite) ────────────────────────────────────────────────
   frontend:
     build:
-      context: ./frontend
+      context:    .
       dockerfile: Dockerfile
-      target: development
+      target:     frontend-dev
     container_name: pulse_frontend
     restart: unless-stopped
     depends_on:

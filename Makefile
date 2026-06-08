@@ -3,11 +3,9 @@
         redis-cli es-health api-health prod-up prod-down help
 
 # ── Variables ──────────────────────────────────────────────────────────────
-COMPOSE        = docker compose
-COMPOSE_PROD   = docker compose -f docker-compose.yml -f docker-compose.prod.yml
-BACKEND_C      = pulse_backend
-MIGRATE_DIR    = ./backend/migrations
-DB_URL         = postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
+COMPOSE      = docker compose
+COMPOSE_PROD = docker compose -f docker-compose.yml -f docker-compose.prod.yml
+BACKEND_C    = pulse_backend
 
 include .env
 export
@@ -54,18 +52,21 @@ lint:          ## Run go vet
 	$(COMPOSE) exec backend go vet ./...
 
 # ── Production ────────────────────────────────────────────────────────────
-prod-up:       ## Start all services (prod)
+prod-up:       ## Start production stack
 	$(COMPOSE_PROD) up -d
 
-prod-down:     ## Stop prod services
+prod-down:     ## Stop production stack
 	$(COMPOSE_PROD) down
 
 # ── Utilities ─────────────────────────────────────────────────────────────
-clean:         ## Remove containers, volumes, and images
+clean:         ## Remove containers and volumes
 	$(COMPOSE) down -v --rmi local
 
 shell-backend: ## Open shell in backend container
 	$(COMPOSE) exec backend sh
+
+shell-frontend: ## Open shell in frontend container
+	$(COMPOSE) exec frontend sh
 
 shell-db:      ## Open psql in postgres container
 	$(COMPOSE) exec postgres psql -U $(POSTGRES_USER) $(POSTGRES_DB)
@@ -73,6 +74,12 @@ shell-db:      ## Open psql in postgres container
 redis-cli:     ## Open redis-cli
 	$(COMPOSE) exec redis redis-cli
 
+es-health:     ## Check Elasticsearch cluster health
+	curl -s http://localhost:9200/_cluster/health | jq .
+
+api-health:    ## Check backend API health
+	curl -s http://localhost:8080/api/v1/health | jq .
+
 help:          ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}'

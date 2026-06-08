@@ -4,12 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**project-pulse** is a full-stack application built with:
-- **Backend**: Go (module `github.com/favouruzochukwu/project-pulse`)
-- **Frontend**: React 18 + TypeScript + Vite
-- **Database**: PostgreSQL 16 (raw SQL via `pgx/v5` — no ORM)
-- **Cache**: Redis 7
-- **Message queue**: Kafka (Confluent Platform 7.6, managed via Zookeeper)
+**project-pulse** is a full-stack observability platform (Sentry + Datadog–style) built with:
 
 | Layer | Technology |
 |---|---|
@@ -29,17 +24,18 @@ Everything runs via Docker Compose from a single root `Dockerfile`. Neither Go n
 
 ## Commands
 
-All day-to-day operations go through the root `Makefile`. The Makefile sources `.env` automatically — copy `.env.example` to `.env` before running anything.
+Copy `.env.example` → `.env` before running anything.
 
 ```bash
 cp .env.example .env
 
-make up              # start all services (postgres, redis, kafka, backend, frontend)
+make up              # start all services (dev)
 make down            # stop all services
-make build           # rebuild images from scratch
+make build           # rebuild images from scratch (use after adding npm packages)
 make logs            # tail all logs
 make logs-backend    # tail backend only
 make ps              # container status
+make api-health      # curl /api/v1/health
 ```
 
 ### Database / Migrations
@@ -61,7 +57,7 @@ make test-cover  # go test -cover ./...
 make lint        # go vet ./...
 ```
 
-To run a single test package or function directly:
+### Testing & Linting
 
 ```bash
 make shell-backend   # sh inside the Go container
@@ -73,22 +69,25 @@ make es-health       # curl Elasticsearch cluster health
 
 ### Utility shells
 
-```bash
-make shell-backend  # sh inside the Go container
-make shell-db       # psql into pulse_db
-make redis-cli      # redis-cli session
+# Single test file:
+docker compose exec backend npm run test -- --testPathPattern=alerts
 ```
 
-### Production
+### Utilities
 
 ```bash
-make prod-up    # docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-make prod-down
+make shell-backend   # sh inside the NestJS container
+make shell-frontend  # sh inside the Vite container
+make shell-db        # psql into pulse_db
+make redis-cli       # redis-cli session
+make es-health       # curl Elasticsearch cluster health
 ```
+
+---
 
 ## Architecture
 
-The backend follows **Clean Architecture** with a strict one-way dependency rule:
+### Request flow
 
 ```
 Browser
@@ -103,7 +102,7 @@ Browser
               └─► Route handler
 ```
 
-No outer layer may be imported by an inner one.
+### Event ingestion pipeline
 
 ```
 POST /api/v1/ingest  (X-Api-Key)
@@ -119,7 +118,17 @@ channel worker pool (concurrency=10)
   → index        — ES IndexEvent + IndexGroup (goroutine, non-blocking)
 ```
 
-### Key conventions
+```
+@Cron(EVERY_MINUTE)  AlertEvaluatorService.evaluateAll()
+  → fetch all isActive=true alerts
+  → for each: dispatch by condition.type
+      threshold      → COUNT(events) in window vs threshold
+      spike          → current window / baseline window ≥ multiplier
+      recurrence     → open ErrorGroups seen >1× in last N minutes
+      new_error_group → ErrorGroups created since last check (in-memory timestamp)
+  → if condition met  && no open trigger  → create AlertTrigger
+  → if condition clear && open trigger    → auto-resolve (set resolvedAt)
+```
 
 ```
 time.Ticker(60s)  AlertEvaluator.evaluateAll()
@@ -170,18 +179,23 @@ backend/
 
 ```
 frontend/src/
-  api/        # axios client + typed endpoint functions
-  components/ # reusable UI components
-  features/   # feature-sliced modules (each owns its own components, hooks, types)
-  hooks/      # shared custom hooks
-  store/      # Zustand slices
-  types/      # shared TypeScript types
-  utils/      # pure utility functions
+  api/          # axios client (/api/v1 base) + typed functions per domain
+  components/   # Reusable UI: Card, NavBar, KpiCard, VolumeChart,
+                #   StatusBadge, SeverityBadge, AlertStateBadge,
+                #   IncidentTimeline, RelatedErrors, FrequencyChart,
+                #   AffectedServices, ConditionSummary, ConditionBuilder,
+                #   TriggerHistory, PageState
+  features/
+    dashboard/  # DashboardPage — KPI cards, volume chart, service health,
+                #   top error groups, incident summary, top error types
+    incidents/  # IncidentListPage, IncidentDetailPage
+    alerts/     # AlertListPage, AlertDetailPage
+  store/        # Zustand slices: incidentStore, alertStore
+  types/        # Shared TypeScript types (Incident, Alert, AlertCondition…)
+  utils/        # time.ts (relativeTime, formatDateTime…), colors.ts (LEVEL_HEX…)
 ```
 
-<<<<<<< Updated upstream
 The frontend talks to the backend at `VITE_API_BASE_URL` (defaults to `http://localhost:8080/api/v1`). Server state is managed with TanStack Query; client-only state with Zustand.
-=======
 ### Frontend routes
 
 | Path | Page |
@@ -208,61 +222,16 @@ The frontend talks to the backend at `VITE_API_BASE_URL` (defaults to `http://lo
 - **Font**: whole app uses monospace — set on `html, body` in `@layer base`.
 
 ---
->>>>>>> Stashed changes
 
 ## Infrastructure topology
 
 ```
-<<<<<<< Updated upstream
 Host (browser) → Frontend :3000 → Backend :8080 → PostgreSQL :5432
                                               → Redis :6379
                                               → Kafka :9092 (host) / :29092 (internal)
 ```
 
 The backend container's `POSTGRES_HOST`, `REDIS_HOST`, and `KAFKA_BROKERS` are overridden in `docker-compose.yml` to use service names (`postgres`, `redis`, `kafka:29092`) regardless of what `.env` says.
-=======
-Production:
-  Internet → nginx :80/:443
-               ├─► /api/* → NestJS :8080 → PostgreSQL :5432
-               │                        → Redis     :6379
-               │                        → Elasticsearch :9200
-               └─► /*     → React SPA (static files)
-
-Development (Docker Compose):
-  Browser → Vite :3000 (/api/* proxied) → Gin :8080
-                                        → PostgreSQL :5432
-                                        → Redis     :6379
-                                        → Elasticsearch :9200
-```
-
-Docker Compose overrides `DATABASE_URL`, `REDIS_HOST`, and `ELASTICSEARCH_URL` to use Docker service names regardless of `.env`.
-
----
-
-## Docker
-
-Single root `Dockerfile` with 7 named stages:
-
-| Stage | Purpose |
-|---|---|
-| `backend-base` | `go mod tidy + download` — layer-cached dep fetch |
-| `backend-dev` | `go run ./cmd/server` — dev server (no hot-reload; restart container) |
-| `backend-builder` | `CGO_ENABLED=0 go build` — static binary |
-| `backend-prod` | Alpine + binary + migrations dir |
-| `frontend-base` | `npm install` for frontend |
-| `frontend-dev` | Vite dev server |
-| `frontend-builder` | `npm run build` (Vite static output) |
-| `frontend-prod` | nginx serving static files + `/api/*` proxy |
-
-```bash
-# Development
-make up       # docker compose up -d (targets: backend-dev, frontend-dev)
-
-# Production
-make prod-up  # docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-              # (targets: backend-prod, frontend-prod)
-```
-
 ---
 
 ## CI/CD
@@ -283,4 +252,4 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on push to `main`/`develop`:
 - Admin guard uses `crypto/subtle.ConstantTimeCompare` with byte padding against timing attacks.
 - All pgx queries use `$N` parameterised placeholders — no SQL injection surface.
 - Audit log: every POST/PATCH/DELETE is logged with method, path, status, latency, IP (zap structured).
->>>>>>> Stashed changes
+
