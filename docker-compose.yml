@@ -48,6 +48,7 @@ services:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
 
+<<<<<<< Updated upstream
   # ── Kafka ──────────────────────────────────────────────────────────────────
   kafka:
     image: confluentinc/cp-kafka:7.6.0
@@ -74,6 +75,9 @@ services:
       retries: 5
 
   # ── Backend (Go API) ───────────────────────────────────────────────────────
+=======
+  # ── Backend (Go + Gin) ─────────────────────────────────────────────────────
+>>>>>>> Stashed changes
   backend:
     build:
       context: ./backend
@@ -91,14 +95,25 @@ services:
     env_file:
       - .env
     environment:
+<<<<<<< Updated upstream
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       KAFKA_BROKERS: kafka:29092
+=======
+      DATABASE_URL:      postgresql://${POSTGRES_USER:-pulse}:${POSTGRES_PASSWORD:-pulse_secret}@postgres:5432/${POSTGRES_DB:-pulse_db}?sslmode=disable
+      REDIS_HOST:        redis
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+>>>>>>> Stashed changes
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
       - ./backend:/app
+<<<<<<< Updated upstream
     command: ["air", "-c", ".air.toml"]
+=======
+      # Keep the module cache across rebuilds
+      - go_pkg_cache:/root/go/pkg/mod
+>>>>>>> Stashed changes
 
   # ── Frontend (React) ───────────────────────────────────────────────────────
   frontend:
@@ -121,6 +136,11 @@ services:
 volumes:
   postgres_data:
   redis_data:
+<<<<<<< Updated upstream
   kafka_data:
   zookeeper_data:
   zookeeper_log:
+=======
+  elasticsearch_data:
+  go_pkg_cache:
+>>>>>>> Stashed changes
