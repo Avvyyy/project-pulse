@@ -42,20 +42,13 @@ services:
     container_name: pulse_elasticsearch
     restart: unless-stopped
     environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    ports:
-      - "9200:9200"
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
     volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
-    healthcheck:
-      test:     ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -qv '\"status\":\"red\"'"]
-      interval: 30s
-      timeout:  10s
-      retries:  5
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
 
-  # ── Backend (NestJS) ───────────────────────────────────────────────────────
+  # ── Backend (Go + Gin) ─────────────────────────────────────────────────────
   backend:
     build:
       context:    .
@@ -72,15 +65,15 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      # Override hosts to use service names inside Docker
-      DATABASE_URL:        postgresql://${POSTGRES_USER:-pulse}:${POSTGRES_PASSWORD:-pulse_secret}@postgres:5432/${POSTGRES_DB:-pulse_db}?sslmode=disable
-      REDIS_HOST:          redis
-      ELASTICSEARCH_URL:   http://elasticsearch:9200
+      DATABASE_URL:      postgresql://${POSTGRES_USER:-pulse}:${POSTGRES_PASSWORD:-pulse_secret}@postgres:5432/${POSTGRES_DB:-pulse_db}?sslmode=disable
+      REDIS_HOST:        redis
+      ELASTICSEARCH_URL: http://elasticsearch:9200
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
       - ./backend:/app
-      - /app/node_modules  # keep container node_modules isolated
+      # Keep the module cache across rebuilds
+      - go_pkg_cache:/root/go/pkg/mod
 
   # ── Frontend (React + Vite) ────────────────────────────────────────────────
   frontend:
@@ -104,3 +97,4 @@ volumes:
   postgres_data:
   redis_data:
   elasticsearch_data:
+  go_pkg_cache:

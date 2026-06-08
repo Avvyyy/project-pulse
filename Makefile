@@ -1,4 +1,6 @@
-.PHONY: up down build logs ps migrate-up migrate-down migrate-create prisma-studio prisma-generate test test-cover lint clean shell-backend shell-db redis-cli es-health prod-up prod-down help
+.PHONY: up down build logs logs-backend ps migrate-up migrate-down \
+        test lint clean shell-backend shell-frontend shell-db \
+        redis-cli es-health api-health prod-up prod-down help
 
 # ── Variables ──────────────────────────────────────────────────────────────
 COMPOSE      = docker compose
@@ -15,7 +17,7 @@ up:            ## Start all services (dev)
 down:          ## Stop all services
 	$(COMPOSE) down
 
-build:         ## Rebuild images
+build:         ## Rebuild images from scratch
 	$(COMPOSE) build --no-cache
 
 logs:          ## Follow logs (all services)
@@ -27,31 +29,27 @@ logs-backend:  ## Follow backend logs
 ps:            ## Show running containers
 	$(COMPOSE) ps
 
-# ── Prisma / Database ──────────────────────────────────────────────────────
-migrate-up:    ## Apply all pending Prisma migrations
-	$(COMPOSE) exec backend npx prisma migrate deploy
+# ── Database ───────────────────────────────────────────────────────────────
+# Migrations are applied automatically at startup via the Go migration runner.
+# Use these targets to inspect the DB.
 
-migrate-down:  ## Revert the last migration (dev only)
-	$(COMPOSE) exec backend npx prisma migrate reset --skip-seed --force
+migrate-up:    ## Apply migrations (runs inside backend; useful after schema changes)
+	$(COMPOSE) exec backend go run ./cmd/server -migrate-only 2>/dev/null || \
+	    echo "Migrations are applied automatically at server startup"
 
-migrate-create: ## Create a new migration: make migrate-create name=add_index
-	$(COMPOSE) exec backend npx prisma migrate dev --name $(name)
-
-prisma-generate: ## Regenerate Prisma client (after schema change)
-	$(COMPOSE) exec backend npx prisma generate
-
-prisma-studio: ## Open Prisma Studio (http://localhost:5555)
-	$(COMPOSE) exec backend npx prisma studio --port 5555 --browser none
+migrate-down:  ## Reset the database (dev only — drops all data!)
+	$(COMPOSE) exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) \
+	    -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
 # ── Testing & Linting ─────────────────────────────────────────────────────
 test:          ## Run backend tests
-	$(COMPOSE) exec backend npm run test
+	$(COMPOSE) exec backend go test ./...
 
 test-cover:    ## Run tests with coverage
-	$(COMPOSE) exec backend npm run test:cov
+	$(COMPOSE) exec backend go test -cover ./...
 
-lint:          ## Run ESLint
-	$(COMPOSE) exec backend npm run lint
+lint:          ## Run go vet
+	$(COMPOSE) exec backend go vet ./...
 
 # ── Production ────────────────────────────────────────────────────────────
 prod-up:       ## Start production stack
