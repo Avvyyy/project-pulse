@@ -48,36 +48,7 @@ services:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
 
-<<<<<<< Updated upstream
-  # ── Kafka ──────────────────────────────────────────────────────────────────
-  kafka:
-    image: confluentinc/cp-kafka:7.6.0
-    container_name: pulse_kafka
-    restart: unless-stopped
-    depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-  # ── Backend (Go API) ───────────────────────────────────────────────────────
-=======
   # ── Backend (Go + Gin) ─────────────────────────────────────────────────────
->>>>>>> Stashed changes
   backend:
     build:
       context: ./backend
@@ -95,25 +66,15 @@ services:
     env_file:
       - .env
     environment:
-<<<<<<< Updated upstream
-      POSTGRES_HOST: postgres
-      REDIS_HOST: redis
-      KAFKA_BROKERS: kafka:29092
-=======
       DATABASE_URL:      postgresql://${POSTGRES_USER:-pulse}:${POSTGRES_PASSWORD:-pulse_secret}@postgres:5432/${POSTGRES_DB:-pulse_db}?sslmode=disable
       REDIS_HOST:        redis
       ELASTICSEARCH_URL: http://elasticsearch:9200
->>>>>>> Stashed changes
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
       - ./backend:/app
-<<<<<<< Updated upstream
-    command: ["air", "-c", ".air.toml"]
-=======
       # Keep the module cache across rebuilds
       - go_pkg_cache:/root/go/pkg/mod
->>>>>>> Stashed changes
 
   # ── Frontend (React) ───────────────────────────────────────────────────────
   frontend:
@@ -136,11 +97,5 @@ services:
 volumes:
   postgres_data:
   redis_data:
-<<<<<<< Updated upstream
-  kafka_data:
-  zookeeper_data:
-  zookeeper_log:
-=======
   elasticsearch_data:
   go_pkg_cache:
->>>>>>> Stashed changes

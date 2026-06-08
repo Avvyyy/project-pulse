@@ -11,9 +11,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Cache**: Redis 7
 - **Message queue**: Kafka (Confluent Platform 7.6, managed via Zookeeper)
 
-<<<<<<< Updated upstream
-Everything runs via Docker Compose. Go and Node are not required locally.
-=======
 | Layer | Technology |
 |---|---|
 | Backend API | Go 1.22 + Gin |
@@ -29,7 +26,6 @@ Everything runs via Docker Compose. Go and Node are not required locally.
 Everything runs via Docker Compose from a single root `Dockerfile`. Neither Go nor Node is required locally.
 
 ---
->>>>>>> Stashed changes
 
 ## Commands
 
@@ -46,24 +42,6 @@ make logs-backend    # tail backend only
 make ps              # container status
 ```
 
-<<<<<<< Updated upstream
-### Database migrations
-
-Migrations live in `backend/migrations/` as numbered `.sql` files managed by `golang-migrate`.
-
-```bash
-make migrate-up                        # apply all pending migrations
-make migrate-down                      # roll back one migration
-make migrate-create name=create_users  # scaffold a new migration pair
-```
-
-### Testing & linting (run inside the backend container)
-
-```bash
-make test        # go test ./... -v -race with coverage output
-make test-cover  # open HTML coverage report
-make lint        # golangci-lint run ./...
-=======
 ### Database / Migrations
 
 SQL migrations live in `backend/migrations/` (numbered `001_initial.sql`, etc.).
@@ -81,21 +59,16 @@ make shell-db       # psql into pulse_db
 make test        # go test ./... (inside backend container)
 make test-cover  # go test -cover ./...
 make lint        # go vet ./...
->>>>>>> Stashed changes
 ```
 
 To run a single test package or function directly:
 
 ```bash
-<<<<<<< Updated upstream
-docker compose exec backend go test ./internal/application/usecase/... -run TestCreateUser -v
-=======
 make shell-backend   # sh inside the Go container
 make shell-frontend  # sh inside the Vite container
 make shell-db        # psql into pulse_db
 make redis-cli       # redis-cli session
 make es-health       # curl Elasticsearch cluster health
->>>>>>> Stashed changes
 ```
 
 ### Utility shells
@@ -118,10 +91,6 @@ make prod-down
 The backend follows **Clean Architecture** with a strict one-way dependency rule:
 
 ```
-<<<<<<< Updated upstream
-Domain  ←  Application  ←  Infrastructure
-                         ←  Interfaces (HTTP)
-=======
 Browser
   └─► Vite dev server :3000 (/api/* proxied to backend:8080)
         └─► Gin :8080
@@ -132,23 +101,10 @@ Browser
               ├─► AdminAuth middleware (timing-safe X-Admin-Secret check)
               ├─► Audit middleware (POST/PATCH/DELETE → structured zap log)
               └─► Route handler
->>>>>>> Stashed changes
 ```
 
 No outer layer may be imported by an inner one.
 
-<<<<<<< Updated upstream
-### Backend layer breakdown
-
-| Layer | Path | Responsibility |
-|---|---|---|
-| **Domain** | `internal/domain/` | Entities, repository interfaces, domain errors. Zero external deps. |
-| **Application** | `internal/application/` | Use cases (orchestrate domain + call repository ports), DTOs. |
-| **Infrastructure** | `internal/infrastructure/` | Concrete implementations: PostgreSQL repos, Redis cache, Kafka producer/consumer, Viper config. |
-| **Interfaces** | `internal/interfaces/http/` | Gin handlers, middleware, router wiring. Translates HTTP ↔ application DTOs. |
-| **Shared** | `pkg/` | Logger (zap), validator wrapper, HTTP response helpers. No business logic. |
-| **Entry point** | `cmd/api/main.go` | Wires everything together via dependency injection (manual, no DI framework). |
-=======
 ```
 POST /api/v1/ingest  (X-Api-Key)
   → IngestHandler (validates JSON)
@@ -162,20 +118,9 @@ channel worker pool (concurrency=10)
   → store        — pgx UpsertErrorGroup (ON CONFLICT atomic) + CreateEvent
   → index        — ES IndexEvent + IndexGroup (goroutine, non-blocking)
 ```
->>>>>>> Stashed changes
 
 ### Key conventions
 
-<<<<<<< Updated upstream
-- **Repository pattern**: domain layer defines interfaces (`UserRepository`, etc.); infrastructure layer implements them. Use cases receive interfaces, never concrete types.
-- **DTOs live in application**: request/response shapes used by handlers are defined in `internal/application/dto/`, not in handlers.
-- **No ORM**: all SQL is written by hand using `pgx/v5`. Use `pgx.Row` / `pgx.Rows` and struct scanning.
-- **Migrations are append-only**: never edit an existing migration file; always create a new numbered pair.
-- **Structured logging**: use `pkg/logger` (wraps `go.uber.org/zap`). Never use `fmt.Println` in production paths.
-- **Config via Viper + env**: all configuration is read from environment variables (mapped in `internal/infrastructure/config/`). `.env` is loaded at startup in development; in production, inject env vars directly.
-- **JWT**: access tokens (15 min TTL) + refresh tokens (7 days). Secrets are separate (`JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET`).
-- **Kafka internal listener**: within Docker Compose, services connect to Kafka on `kafka:29092` (the `PLAINTEXT_INTERNAL` listener). The `localhost:9092` address is only for external tools on the host.
-=======
 ```
 time.Ticker(60s)  AlertEvaluator.evaluateAll()
   → GetActiveAlerts (single LATERAL JOIN query, no N+1)
@@ -220,7 +165,6 @@ backend/
     server/server.go           # Gin engine + all routes registered
   migrations/001_initial.sql   # Full schema (applied once at startup)
 ```
->>>>>>> Stashed changes
 
 ### Frontend structure
 
