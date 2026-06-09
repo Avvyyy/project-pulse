@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/favouruzochukwu/project-pulse/internal/models"
+	"github.com/avvyyy/project-pulse/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

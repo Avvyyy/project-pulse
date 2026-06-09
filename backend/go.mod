@@ -1,4 +1,4 @@
-module github.com/favouruzochukwu/project-pulse
+module github.com/avvyyy/project-pulse
 
 go 1.22
 

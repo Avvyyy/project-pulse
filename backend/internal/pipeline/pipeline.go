@@ -9,10 +9,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/favouruzochukwu/project-pulse/internal/models"
-	"github.com/favouruzochukwu/project-pulse/internal/queue"
-	"github.com/favouruzochukwu/project-pulse/internal/repository"
-	"github.com/favouruzochukwu/project-pulse/internal/search"
+	"github.com/avvyyy/project-pulse/internal/models"
+	"github.com/avvyyy/project-pulse/internal/queue"
+	"github.com/avvyyy/project-pulse/internal/repository"
+	"github.com/avvyyy/project-pulse/internal/search"
 	"go.uber.org/zap"
 )
 
