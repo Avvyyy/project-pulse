@@ -3,10 +3,10 @@ package server
 import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/favouruzochukwu/project-pulse/internal/handler"
-	"github.com/favouruzochukwu/project-pulse/internal/middleware"
-	redisclient "github.com/favouruzochukwu/project-pulse/internal/redis"
-	"github.com/favouruzochukwu/project-pulse/internal/repository"
+	"github.com/avvyyy/project-pulse/internal/handler"
+	"github.com/avvyyy/project-pulse/internal/middleware"
+	redisclient "github.com/avvyyy/project-pulse/internal/redis"
+	"github.com/avvyyy/project-pulse/internal/repository"
 	"go.uber.org/zap"
 )
 

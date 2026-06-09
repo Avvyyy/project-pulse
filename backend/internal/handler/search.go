@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/favouruzochukwu/project-pulse/internal/models"
-	"github.com/favouruzochukwu/project-pulse/internal/search"
+	"github.com/avvyyy/project-pulse/internal/models"
+	"github.com/avvyyy/project-pulse/internal/search"
 )
 
 type SearchHandler struct {

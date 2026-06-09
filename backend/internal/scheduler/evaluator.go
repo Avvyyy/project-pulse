@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/favouruzochukwu/project-pulse/internal/repository"
+	"github.com/avvyyy/project-pulse/internal/repository"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )

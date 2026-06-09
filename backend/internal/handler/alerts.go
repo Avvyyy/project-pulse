@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/favouruzochukwu/project-pulse/internal/repository"
+	"github.com/avvyyy/project-pulse/internal/repository"
 )
 
 type AlertHandler struct {

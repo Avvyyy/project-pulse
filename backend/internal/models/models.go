@@ -12,9 +12,7 @@ type APIKey struct {
 	Name               string    `json:"name"`
 	RateLimitPerMinute int       `json:"rateLimitPerMinute"`
 	CreatedAt          time.Time `json:"createdAt"`
-	// FullKey is set only on creation
 	FullKey *string `json:"fullKey,omitempty"`
-	// KeyHash is never serialized to JSON
 	KeyHash string `json:"-"`
 }
 

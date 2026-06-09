@@ -1,4 +1,3 @@
-version: "3.9"
 
 services:
   # ── PostgreSQL ─────────────────────────────────────────────────────────────
@@ -15,7 +14,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test:     ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulse}"]
+      test:     ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulse} -d ${POSTGRES_DB:-pulse_db}"]
       interval: 10s
       timeout:  5s
       retries:  5
@@ -42,11 +41,15 @@ services:
     container_name: pulse_elasticsearch
     restart: unless-stopped
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
+      - discovery.type=single-node
+      - xpack.security.enabled=false
     volumes:
-      - zookeeper_data:/var/lib/zookeeper/data
-      - zookeeper_log:/var/lib/zookeeper/log
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
 
   # ── Backend (Go + Gin) ─────────────────────────────────────────────────────
   backend:

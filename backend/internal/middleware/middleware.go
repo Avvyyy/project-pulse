@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	redisclient "github.com/favouruzochukwu/project-pulse/internal/redis"
-	"github.com/favouruzochukwu/project-pulse/internal/repository"
+	redisclient "github.com/avvyyy/project-pulse/internal/redis"
+	"github.com/avvyyy/project-pulse/internal/repository"
 	"go.uber.org/zap"
 )
 
