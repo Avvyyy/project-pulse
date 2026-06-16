@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/avvyyy/project-pulse/internal/broadcast"
 	"github.com/avvyyy/project-pulse/internal/models"
 	"github.com/avvyyy/project-pulse/internal/queue"
 	"github.com/avvyyy/project-pulse/internal/repository"
@@ -19,13 +20,14 @@ import (
 // Processor runs the 4-stage ingestion pipeline:
 //   normalize → enrich → fingerprint → store
 type Processor struct {
-	eventRepo *repository.EventRepo
+	eventRepo   *repository.EventRepo
 	searchClient *search.Client
-	log      *zap.Logger
+	broadcaster *broadcast.Broadcaster
+	log         *zap.Logger
 }
 
-func NewProcessor(eventRepo *repository.EventRepo, searchClient *search.Client, log *zap.Logger) *Processor {
-	return &Processor{eventRepo: eventRepo, searchClient: searchClient, log: log}
+func NewProcessor(eventRepo *repository.EventRepo, searchClient *search.Client, broadcaster *broadcast.Broadcaster, log *zap.Logger) *Processor {
+	return &Processor{eventRepo: eventRepo, searchClient: searchClient, broadcaster: broadcaster, log: log}
 }
 
 // Handle is the queue.Handler implementation.
@@ -40,6 +42,17 @@ func (p *Processor) Handle(ctx context.Context, job queue.Job) {
 		p.log.Error("store event", zap.Error(err))
 		return
 	}
+
+	// Broadcast event to all connected WebSocket clients
+	p.broadcaster.Publish(ctx, broadcast.Event{
+		Type:      "event",
+		Service:   event.Service,
+		Level:     event.Level,
+		Message:   event.Message,
+		Timestamp: event.Timestamp.Format(time.RFC3339),
+		EventID:   event.ID,
+		GroupID:   *event.ErrorGroupID,
+	})
 
 	// Index asynchronously — don't block on ES failures
 	go func() {
@@ -98,6 +111,10 @@ func (p *Processor) process(ctx context.Context, job queue.Job) (*models.Event, 
 	egID, err := p.eventRepo.UpsertErrorGroup(ctx, fp, svc, env, level, title, ts)
 	if err != nil {
 		return nil, "", fmt.Errorf("upsert error group: %w", err)
+	}
+
+	if job.Tags == nil {
+		job.Tags = []string{}
 	}
 
 	event := &models.Event{

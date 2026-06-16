@@ -12,6 +12,7 @@ type Config struct {
 	AppPort string
 
 	AdminSecret string
+	JWTSecret   string
 
 	PostgresDSN string
 
@@ -32,6 +33,7 @@ func Load() (*Config, error) {
 		AppPort: getEnv("APP_PORT", "8080"),
 
 		AdminSecret: getEnv("ADMIN_SECRET", ""),
+		JWTSecret:   getEnv("JWT_SECRET", "super-secret-jwt-key-for-dev"),
 
 		PostgresDSN: getEnv("DATABASE_URL", ""),
 
@@ -59,8 +61,14 @@ func Load() (*Config, error) {
 	if c.AppEnv == "production" && (c.AdminSecret == "" || c.AdminSecret == "admin-secret-change-in-production") {
 		return nil, fmt.Errorf("ADMIN_SECRET must be set to a non-default value in production")
 	}
+	if c.AppEnv == "production" && (c.JWTSecret == "" || c.JWTSecret == "super-secret-jwt-key-for-dev") {
+		return nil, fmt.Errorf("JWT_SECRET must be set to a non-default value in production")
+	}
 	if c.AdminSecret == "" {
 		c.AdminSecret = "admin-secret-change-in-production"
+	}
+	if c.JWTSecret == "" {
+		c.JWTSecret = "super-secret-jwt-key-for-dev"
 	}
 
 	return c, nil
