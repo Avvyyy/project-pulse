@@ -1,37 +1,30 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Backend
+# Backend (Go + Gin)
 # ─────────────────────────────────────────────────────────────────────────────
 
-FROM node:20-alpine AS backend-base
+FROM golang:1.22-alpine AS backend-base
+RUN apk add --no-cache git ca-certificates
 WORKDIR /app
-COPY backend/package*.json ./
-RUN npm ci
+COPY backend/ .
+RUN go mod tidy && go mod download
 
 FROM backend-base AS backend-dev
-# Generate Prisma client before the volume mount shadows the source tree.
-COPY backend/prisma ./prisma
-RUN npx prisma generate
-COPY backend/ .
 EXPOSE 8080
-CMD ["npm", "run", "start:dev"]
+CMD ["go", "run", "./cmd/server"]
 
 FROM backend-base AS backend-builder
-COPY backend/prisma ./prisma
-RUN npx prisma generate
-COPY backend/ .
-RUN npm run build
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /server ./cmd/server
 
-FROM node:20-alpine AS backend-prod
+FROM alpine:3.20 AS backend-prod
+RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
-COPY --from=backend-builder /app/dist         ./dist
-COPY --from=backend-builder /app/node_modules ./node_modules
-COPY --from=backend-builder /app/package.json ./package.json
-COPY --from=backend-builder /app/prisma       ./prisma
+COPY --from=backend-builder /server ./server
+COPY backend/migrations ./migrations
 EXPOSE 8080
-CMD ["node", "dist/main"]
+CMD ["./server"]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Frontend
+# Frontend (React + Vite)
 # ─────────────────────────────────────────────────────────────────────────────
 
 FROM node:20-alpine AS frontend-base
