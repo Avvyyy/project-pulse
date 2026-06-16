@@ -5,17 +5,27 @@ import (
 	"time"
 )
 
+// ── Users ─────────────────────────────────────────────────────────────────────
+
+type User struct {
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"-"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
 // ── API Keys ──────────────────────────────────────────────────────────────────
 
 type APIKey struct {
-	ID                 string    `json:"id"`
-	Name               string    `json:"name"`
-	RateLimitPerMinute int       `json:"rateLimitPerMinute"`
-	CreatedAt          time.Time `json:"createdAt"`
-	// FullKey is set only on creation
-	FullKey *string `json:"fullKey,omitempty"`
-	// KeyHash is never serialized to JSON
-	KeyHash string `json:"-"`
+	ID                 string     `json:"id"`
+	UserID             string     `json:"userId"`
+	Name               string     `json:"name"`
+	RateLimitPerMinute int        `json:"rateLimitPerMinute"`
+	IsActive           bool       `json:"isActive"`
+	DisabledAt         *time.Time `json:"disabledAt,omitempty"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	FullKey            *string    `json:"fullKey,omitempty"`
+	KeyHash            string     `json:"-"`
 }
 
 // ── Events ────────────────────────────────────────────────────────────────────

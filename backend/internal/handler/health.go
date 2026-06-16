@@ -5,8 +5,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	redisclient "github.com/favouruzochukwu/project-pulse/internal/redis"
-	"github.com/favouruzochukwu/project-pulse/internal/search"
+	redisclient "github.com/avvyyy/project-pulse/internal/redis"
+	"github.com/avvyyy/project-pulse/internal/search"
 )
 
 type HealthHandler struct {

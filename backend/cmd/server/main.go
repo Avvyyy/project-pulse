@@ -9,16 +9,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/favouruzochukwu/project-pulse/internal/config"
-	"github.com/favouruzochukwu/project-pulse/internal/db"
-	"github.com/favouruzochukwu/project-pulse/internal/handler"
-	"github.com/favouruzochukwu/project-pulse/internal/pipeline"
-	"github.com/favouruzochukwu/project-pulse/internal/queue"
-	redisclient "github.com/favouruzochukwu/project-pulse/internal/redis"
-	"github.com/favouruzochukwu/project-pulse/internal/repository"
-	"github.com/favouruzochukwu/project-pulse/internal/scheduler"
-	"github.com/favouruzochukwu/project-pulse/internal/search"
-	"github.com/favouruzochukwu/project-pulse/internal/server"
+	"github.com/avvyyy/project-pulse/internal/broadcast"
+	"github.com/avvyyy/project-pulse/internal/config"
+	"github.com/avvyyy/project-pulse/internal/db"
+	"github.com/avvyyy/project-pulse/internal/auth"
+	"github.com/avvyyy/project-pulse/internal/handler"
+	"github.com/avvyyy/project-pulse/internal/pipeline"
+	"github.com/avvyyy/project-pulse/internal/queue"
+	redisclient "github.com/avvyyy/project-pulse/internal/redis"
+	"github.com/avvyyy/project-pulse/internal/repository"
+	"github.com/avvyyy/project-pulse/internal/scheduler"
+	"github.com/avvyyy/project-pulse/internal/search"
+	"github.com/avvyyy/project-pulse/internal/server"
 	"go.uber.org/zap"
 )
 
@@ -65,13 +67,17 @@ func main() {
 
 	// ── Repositories ──────────────────────────────────────────────────────────
 	apiKeyRepo   := repository.NewAPIKeyRepo(pool)
+	userRepo     := repository.NewUserRepo(pool)
 	eventRepo    := repository.NewEventRepo(pool)
 	incidentRepo := repository.NewIncidentRepo(pool)
 	alertRepo    := repository.NewAlertRepo(pool)
 	dashboardRepo := repository.NewDashboardRepo(pool)
 
 	// ── Ingestion pipeline + queue ────────────────────────────────────────────
-	proc := pipeline.NewProcessor(eventRepo, esClient, log)
+	broadcaster := broadcast.New()
+	defer broadcaster.Shutdown()
+
+	proc := pipeline.NewProcessor(eventRepo, esClient, broadcaster, log)
 	q := queue.New(10, 1000, proc.Handle)
 	defer q.Shutdown()
 
@@ -80,23 +86,31 @@ func main() {
 	evaluator.Start(ctx)
 
 	// ── HTTP handlers ─────────────────────────────────────────────────────────
+	authH      := handler.NewAuthHandler(userRepo, cfg)
 	ingestH    := handler.NewIngestHandler(q, log)
 	apiKeyH    := handler.NewAPIKeyHandler(apiKeyRepo, rdb)
 	incidentH  := handler.NewIncidentHandler(incidentRepo)
 	alertH     := handler.NewAlertHandler(alertRepo)
 	dashboardH := handler.NewDashboardHandler(dashboardRepo)
 	healthH    := handler.NewHealthHandler(pool, rdb, esClient)
-	searchH    := handler.NewSearchHandler(esClient)
+	searchH    := handler.NewSearchHandler(esClient, eventRepo)
+	wsH        := handler.NewWebSocketHandler(broadcaster, log)
 
 	deps := server.Deps{
 		Redis:       rdb,
 		APIKeyRepo:  apiKeyRepo,
+		Config:      cfg,
 		AdminSecret: cfg.AdminSecret,
 		CORSOrigins: cfg.CORSAllowedOrigins,
 		Log:         log,
 	}
 
-	r := server.New(deps, ingestH, apiKeyH, incidentH, alertH, dashboardH, healthH, searchH)
+	r := server.New(deps, authH, ingestH, apiKeyH, incidentH, alertH, dashboardH, healthH, searchH, wsH)
+
+	// ── Seed Test User ────────────────────────────────────────────────────────
+	if cfg.AppEnv == "development" {
+		_ = seedTestUser(ctx, userRepo, log)
+	}
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.AppPort),
@@ -131,4 +145,25 @@ func migrationsPath() string {
 	}
 	// Local dev: relative to the module root
 	return "migrations"
+}
+
+func seedTestUser(ctx context.Context, userRepo *repository.UserRepo, log *zap.Logger) error {
+	email := "test@example.com"
+	existing, err := userRepo.GetByEmail(ctx, email)
+	if err == nil && existing != nil {
+		return nil // Already seeded
+	}
+	
+	hash, err := auth.HashPassword("password123")
+	if err != nil {
+		log.Error("failed to hash seed user password", zap.Error(err))
+		return err
+	}
+	_, err = userRepo.Create(ctx, email, hash)
+	if err != nil {
+		log.Error("failed to create seed user", zap.Error(err))
+		return err
+	}
+	log.Info("seeded test user", zap.String("email", email))
+	return nil
 }
