@@ -62,6 +62,23 @@ export interface FrequencyPoint {
   count:  number;
 }
 
+export interface Event {
+  id:             string;
+  service:        string;
+  environment:    string;
+  level:          string;
+  message:        string;
+  fingerprint:    string;
+  errorType?:     string | null;
+  severityScore:  number;
+  httpStatusCode?: number | null;
+  tags:           string[];
+  parsedStack?:   string | null;
+  timestamp:      string;
+  receivedAt:     string;
+  errorGroupId?:  string | null;
+}
+
 export interface PaginatedResponse<T> {
   total:   number;
   page:    number;

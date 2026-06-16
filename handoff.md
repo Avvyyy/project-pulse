@@ -63,17 +63,42 @@ Located in the `backend/` directory, the primary backend is written in Go.
   - `scheduler/`: Background tasks (e.g., alert evaluations running on a `time.Ticker`).
 - `migrations/`: Raw `.sql` migration files applied automatically on startup.
 
-### Key Backend Concepts
-1. **Event Ingestion Pipeline**: 
-   - `POST /api/v1/ingest` validates JSON and pushes it to a buffered Go channel (`queue.Queue`).
-   - A worker pool (concurrency=10) pulls events, normalizes them, fingerprints them (SHA-256), stores them in Postgres, and indexes them in Elasticsearch.
-2. **Alert Evaluator**:
-   - Runs every 60 seconds via a goroutine.
-   - Evaluates active alerts based on conditions (thresholds, spikes, recurrences) and creates triggers if conditions are met.
-3. **No ORM / Concurrency**: 
-   - Uses parameterized `pgx` queries to avoid N+1 problems. Complex endpoints (like the dashboard) run multiple SQL queries concurrently using `errgroup`.
+### 4. End-to-End Features
+*   **Incident Timeline**: API endpoints allow adding timeline events (e.g. `POST /api/v1/incidents/:id/timeline`), and the UI renders them in reverse chronological order.
+*   **Alert Toggle/Resolve**: Admins can toggle alerts and resolve individual triggers manually.
+*   **Authentication & User Management**: The system now supports user signup, login, logout, and token refresh via HTTP-only cookies and JWTs.
+*   **API Key Dashboard**: A protected Dashboard for managing (creating/listing/deleting) API keys securely tied to the authenticated user.
 
----
+## Implementation Details
+
+### Database Schema
+- The database schema uses Goose for migrations.
+- `001_init.sql` includes `events`, `error_groups`, `incidents`, `alerts`, `api_keys` and various history tables.
+- `002_add_users.sql` added the `users` table and linked `api_keys` to users via `user_id`.
+
+### Authentication
+- Passwords are encrypted using `bcrypt`.
+- JWT Tokens (Access/Refresh) are generated and set securely as HTTP-only cookies on the client side to mitigate XSS risks.
+- The `UserAuthGuard` middleware parses tokens for `/api/v1/*` routes.
+- Axios Interceptors automatically catch `401 Unauthorized` responses and silently hit `/api/v1/auth/refresh` to keep the user session alive.
+
+### Ingestion Pipeline
+- An `IngestHandler` validates incoming HTTP payloads.
+- Events are pushed onto a Redis queue (`queue.RedisQueue`).
+- A background worker (`pipeline.Worker`) pulls batches of events every 2 seconds or when 1000 items are queued.
+- `Deduplicator` groups repeated events using a Redis-backed sliding window.
+
+### API & Routes
+- Uses Gin for the web framework.
+- Main routes are under `/api/v1/`.
+- Auth Routes (`/auth/*`), Dashboard, Incidents, Alerts, and API Keys are protected by `UserAuthGuard`.
+- Ingest is under `/api/v1/ingest` and requires a valid API key linked to a user.
+
+## What is Left / Next Steps
+- Implement user password reset functionality.
+- Implement more extensive e2e tests for frontend and backend.
+- Set up an email service provider to send incident alerts to users via email.
+- Docker image building process needs to be finalized with CI/CD.
 
 ## 🚀 Running the Project
 

@@ -1,4 +1,6 @@
-import { Link, NavLink } from 'react-router-dom';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../store/authStore';
+import { authApi } from '../api/auth';
 
 interface Crumb {
   label: string;
@@ -13,9 +15,21 @@ const NAV_SECTIONS = [
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/incidents', label: 'Incidents' },
   { to: '/alerts',    label: 'Alerts'    },
+  { to: '/settings/api-keys', label: 'API Keys' },
 ];
 
 export function NavBar({ breadcrumbs }: NavBarProps) {
+  const { user, logout } = useAuthStore();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    try {
+      await authApi.logout();
+    } catch (e) {}
+    logout();
+    navigate('/login');
+  };
+
   return (
     <header className="h-14 border-b border-edge bg-surface flex items-center gap-4 px-6 shrink-0">
       <Link to="/" className="text-lg font-bold text-slate-100 tracking-tight shrink-0">
@@ -60,6 +74,21 @@ export function NavBar({ breadcrumbs }: NavBarProps) {
           </nav>
         </>
       )}
+
+      {/* Auth Controls */}
+      <div className="ml-auto flex items-center gap-4">
+        {user && (
+          <>
+            <span className="text-sm text-slate-400 truncate max-w-[200px]">{user.email}</span>
+            <button
+              onClick={handleLogout}
+              className="text-sm text-slate-400 hover:text-red-400 transition-colors"
+            >
+              Logout
+            </button>
+          </>
+        )}
+      </div>
     </header>
   );
 }

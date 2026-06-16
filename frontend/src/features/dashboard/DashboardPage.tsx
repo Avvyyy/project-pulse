@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { dashboardApi, type DashboardData, type Period, type ServiceHealth } from '../../api/dashboard';
+import { useEventBroadcast } from '../../hooks/useEventBroadcast';
 import { NavBar }       from '../../components/NavBar';
 import { KpiCard }      from '../../components/KpiCard';
+import { GroupEventsAccordion } from '../../components/GroupEventsAccordion';
 import { VolumeChart }  from '../../components/VolumeChart';
 import { Spinner }      from '../../components/PageState';
-import { relativeTime } from '../../utils/time';
+import { formatDateTimeShort, relativeTime } from '../../utils/time';
 
 const PERIODS: Period[] = ['24h', '7d', '30d'];
 
@@ -40,6 +42,8 @@ export default function DashboardPage() {
   const [error,   setError]   = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
+  const { isConnected, events: liveEvents } = useEventBroadcast();
 
   async function load(p: Period) {
     setLoading(true);
@@ -60,6 +64,23 @@ export default function DashboardPage() {
     timerRef.current = setInterval(() => load(period), 60_000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [period]);
+
+  useEffect(() => {
+    if (liveEvents.length === 0) return;
+    if (refreshTimerRef.current !== null) return;
+
+    refreshTimerRef.current = window.setTimeout(() => {
+      load(period);
+      refreshTimerRef.current = null;
+    }, 1000);
+
+    return () => {
+      if (refreshTimerRef.current !== null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, [liveEvents.length, period]);
 
   const ov = data?.overview;
 
@@ -159,9 +180,17 @@ export default function DashboardPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
               <section className="bg-surface border border-edge rounded-xl p-5">
-                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">
-                  Service Health
-                </h2>
+                <div className="flex items-center justify-between mb-3 gap-3">
+                  <div>
+                    <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400">
+                      Service Health
+                    </h2>
+                    <p className="text-xs text-slate-500">Auto-refreshes when new events arrive.</p>
+                  </div>
+                  <span className={`text-xs font-semibold ${isConnected ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {isConnected ? 'Live' : 'Disconnected'}
+                  </span>
+                </div>
                 {data.serviceHealth.length === 0 ? (
                   <p className="text-slate-500 text-sm">No events in this period.</p>
                 ) : (
@@ -210,30 +239,52 @@ export default function DashboardPage() {
                 {data.topErrorGroups.length === 0 ? (
                   <p className="text-slate-500 text-sm">No open error groups.</p>
                 ) : (
-                  <ol className="flex flex-col divide-y divide-edge">
-                    {data.topErrorGroups.map((g, i) => (
-                      <li
-                        key={g.id}
-                        className="flex items-start gap-3 py-2.5 cursor-pointer hover:bg-surface-2 -mx-2 px-2 rounded transition-colors"
-                        onClick={() => navigate(`/incidents`)}>
-                        <span className="text-slate-600 text-xs font-bold w-4 shrink-0 mt-0.5">{i + 1}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-slate-200 text-sm truncate leading-tight">{g.title}</p>
-                          <p className="text-xs text-slate-500 mt-0.5">
-                            <span className={LEVEL_COLOR[g.level] ?? 'text-slate-500'}>{g.level}</span>
-                            {' · '}{g.service}
-                            {' · '}{relativeTime(g.lastSeenAt)}
-                          </p>
-                        </div>
-                        <span className="text-xs font-bold text-slate-300 tabular-nums shrink-0">
-                          {g.occurrenceCount.toLocaleString()}
-                        </span>
-                      </li>
+                  <div className="space-y-3">
+                    {data.topErrorGroups.map((g) => (
+                      <GroupEventsAccordion key={g.id} group={g} />
                     ))}
-                  </ol>
+                  </div>
                 )}
               </section>
             </div>
+
+            <section className="bg-surface border border-edge rounded-xl p-5">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400">Live Events</h2>
+                  <p className="text-xs text-slate-500">Most recent ingestion events from the live stream.</p>
+                </div>
+                <span className="text-xs text-slate-400">{liveEvents.length} events</span>
+              </div>
+              {liveEvents.length === 0 ? (
+                <p className="text-slate-500 text-sm">Waiting for new events. Keep this page open to see live updates.</p>
+              ) : (
+                <ol className="space-y-3">
+                  {liveEvents.slice(0, 6).map((event) => (
+                    <li key={`${event.eventId ?? event.groupId}-${event.timestamp ?? ''}`} className="bg-canvas border border-edge rounded-xl p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-100 truncate">{event.service ?? 'unknown service'}</p>
+                          <p className="text-xs text-slate-500 mt-1">{event.message ?? 'No message'}</p>
+                        </div>
+                        <span className={`text-xs font-semibold ${LEVEL_COLOR[event.level ?? 'info'] ?? 'text-slate-400'}`}>
+                          {event.level?.toUpperCase() ?? 'INFO'}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
+                        <span title={event.timestamp ? formatDateTimeShort(event.timestamp) : undefined}>
+                          {event.timestamp ? relativeTime(event.timestamp) : 'just now'}
+                        </span>
+                        {event.timestamp && (
+                          <span className="hidden sm:inline">{formatDateTimeShort(event.timestamp)}</span>
+                        )}
+                        {event.groupId && <span>group {event.groupId.slice(0, 8)}…</span>}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
 
             {/* ── Incident summary + top error types ── */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
