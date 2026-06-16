@@ -156,7 +156,7 @@ func (e *AlertEvaluator) countEvents(ctx context.Context, alert repository.Activ
 	}
 	query := fmt.Sprintf(`
 		SELECT COUNT(*) FROM events
-		WHERE timestamp >= NOW() - ($1 || ' seconds')::INTERVAL
+		WHERE timestamp >= NOW() - make_interval(secs => $1)
 		  AND ($2::text IS NULL OR service = $2)
 		  AND ($3::text IS NULL OR environment = $3)
 		  AND ($4::text IS NULL OR level = $4)
@@ -175,11 +175,11 @@ func (e *AlertEvaluator) spikeCount(ctx context.Context, alert repository.Active
 	var current, baseline int64
 	err := e.db.QueryRow(ctx, `
 		SELECT
-		    COUNT(*) FILTER (WHERE timestamp >= NOW() - ($1 || ' seconds')::INTERVAL),
-		    COUNT(*) FILTER (WHERE timestamp >= NOW() - (($1 + $2) || ' seconds')::INTERVAL
-		                      AND timestamp  < NOW() - ($1 || ' seconds')::INTERVAL)
+		    COUNT(*) FILTER (WHERE timestamp >= NOW() - make_interval(secs => $1)),
+		    COUNT(*) FILTER (WHERE timestamp >= NOW() - make_interval(secs => $1 + $2)
+		                      AND timestamp  < NOW() - make_interval(secs => $1))
 		FROM events
-		WHERE timestamp >= NOW() - (($1 + $2) || ' seconds')::INTERVAL
+		WHERE timestamp >= NOW() - make_interval(secs => $1 + $2)
 		  AND ($3::text IS NULL OR service     = $3)
 		  AND ($4::text IS NULL OR environment = $4)
 		  AND ($5::text IS NULL OR level       = $5)`,
@@ -197,7 +197,7 @@ func (e *AlertEvaluator) recurrenceCount(ctx context.Context, alert repository.A
 		SELECT COUNT(*) FROM (
 		    SELECT error_group_id
 		    FROM events
-		    WHERE timestamp >= NOW() - ($1 || ' minutes')::INTERVAL
+		    WHERE timestamp >= NOW() - make_interval(mins => $1)
 		      AND error_group_id IS NOT NULL
 		      AND ($2::text IS NULL OR service     = $2)
 		      AND ($3::text IS NULL OR environment = $3)

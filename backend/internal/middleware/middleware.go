@@ -3,6 +3,7 @@ package middleware
 import (
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
@@ -151,6 +152,11 @@ func Audit(log *zap.Logger) gin.HandlerFunc {
 
 func hashKey(raw string) string {
 	raw = strings.TrimPrefix(raw, "pk_")
-	sum := sha256.Sum256([]byte(raw))
+	decoded, err := hex.DecodeString(raw)
+	if err != nil {
+		sum := sha256.Sum256([]byte(raw))
+		return fmt.Sprintf("%x", sum)
+	}
+	sum := sha256.Sum256(decoded)
 	return fmt.Sprintf("%x", sum)
 }

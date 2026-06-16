@@ -5,6 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/avvyyy/project-pulse/internal/handler"
 	"github.com/avvyyy/project-pulse/internal/middleware"
+	"github.com/avvyyy/project-pulse/internal/config"
 	redisclient "github.com/avvyyy/project-pulse/internal/redis"
 	"github.com/avvyyy/project-pulse/internal/repository"
 	"go.uber.org/zap"
@@ -13,12 +14,14 @@ import (
 type Deps struct {
 	Redis       *redisclient.Client
 	APIKeyRepo  *repository.APIKeyRepo
+	Config      *config.Config
 	AdminSecret string
 	CORSOrigins []string
 	Log         *zap.Logger
 }
 
 func New(d Deps,
+	authH      *handler.AuthHandler,
 	ingestH    *handler.IngestHandler,
 	apiKeyH    *handler.APIKeyHandler,
 	incidentH  *handler.IncidentHandler,
@@ -26,6 +29,7 @@ func New(d Deps,
 	dashboardH *handler.DashboardHandler,
 	healthH    *handler.HealthHandler,
 	searchH    *handler.SearchHandler,
+	wsH        *handler.WebSocketHandler,
 ) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -35,6 +39,7 @@ func New(d Deps,
 	corsCfg.AllowOrigins = d.CORSOrigins
 	corsCfg.AllowMethods = []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"}
 	corsCfg.AllowHeaders = []string{"Origin", "Content-Type", "X-Api-Key", "X-Admin-Secret"}
+	corsCfg.AllowCredentials = true
 	r.Use(cors.New(corsCfg))
 
 	// IP rate limit (300 req/min)
@@ -46,57 +51,61 @@ func New(d Deps,
 	// ── Health ────────────────────────────────────────────────────────────────
 	api.GET("/health", healthH.Check)
 
-	// ── Ingest (requires API key + per-key rate limit) ────────────────────────
-	ingest := api.Group("/ingest")
-	ingest.Use(middleware.APIKeyAuth(d.Redis, d.APIKeyRepo, d.Log))
-	ingest.Use(middleware.KeyRateLimit(d.Redis))
-	ingest.POST("", ingestH.Ingest)
+	// ── Ingest ────────────────────────────────────────────────────────────────
+	api.POST("/ingest", ingestH.Ingest)
 
-	// ── Admin (requires admin secret) ────────────────────────────────────────
-	admin := api.Group("/admin")
-	admin.Use(middleware.AdminAuth(d.AdminSecret))
+	// ── WebSocket (real-time events) ──────────────────────────────────────────
+	api.GET("/ws", wsH.Connect)
+
+	// ── Auth ──────────────────────────────────────────────────────────────────
+	authG := api.Group("/auth")
 	{
-		admin.GET("/api-keys", apiKeyH.List)
-		admin.POST("/api-keys", apiKeyH.Create)
-		admin.DELETE("/api-keys/:id", apiKeyH.Delete)
+		authG.POST("/signup", authH.Signup)
+		authG.POST("/login", authH.Login)
+		authG.POST("/refresh", authH.Refresh)
+		authG.POST("/logout", authH.Logout)
+		authG.GET("/me", middleware.UserAuthGuard(d.Config), authH.Me)
 	}
 
-	// ── Dashboard ─────────────────────────────────────────────────────────────
-	api.GET("/dashboard", dashboardH.Get)
-
-	// ── Search ────────────────────────────────────────────────────────────────
-	api.GET("/search/events", searchH.SearchEvents)
-	api.GET("/search/groups", searchH.SearchGroups)
-
-	// ── Incidents ─────────────────────────────────────────────────────────────
-	api.GET("/incidents", incidentH.List)
-	api.GET("/incidents/:id", incidentH.Get)
-	api.GET("/incidents/:id/frequency", incidentH.GetFrequency)
-
-	incidentAdmin := api.Group("/incidents")
-	incidentAdmin.Use(middleware.AdminAuth(d.AdminSecret))
+	// ── Protected API ─────────────────────────────────────────────────────────
+	protected := api.Group("")
+	protected.Use(middleware.UserAuthGuard(d.Config))
 	{
-		incidentAdmin.POST("", incidentH.Create)
-		incidentAdmin.PATCH("/:id", incidentH.Update)
-		incidentAdmin.DELETE("/:id", incidentH.Delete)
-		incidentAdmin.POST("/:id/timeline", incidentH.AddTimeline)
-		incidentAdmin.POST("/:id/error-groups", incidentH.LinkErrorGroup)
-		incidentAdmin.DELETE("/:id/error-groups/:egid", incidentH.UnlinkErrorGroup)
-	}
+		// ── API Keys ──────────────────────────────────────────────────────────────
+		protected.GET("/api-keys", apiKeyH.List)
+		protected.POST("/api-keys", apiKeyH.Create)
+		protected.DELETE("/api-keys/:id", apiKeyH.Delete)
 
-	// ── Alerts ────────────────────────────────────────────────────────────────
-	api.GET("/alerts", alertH.List)
-	api.GET("/alerts/:id", alertH.Get)
-	api.GET("/alerts/:id/triggers", alertH.ListTriggers)
+		// ── Dashboard ─────────────────────────────────────────────────────────────
+		protected.GET("/dashboard", dashboardH.Get)
 
-	alertAdmin := api.Group("/alerts")
-	alertAdmin.Use(middleware.AdminAuth(d.AdminSecret))
-	{
-		alertAdmin.POST("", alertH.Create)
-		alertAdmin.PATCH("/:id", alertH.Update)
-		alertAdmin.DELETE("/:id", alertH.Delete)
-		alertAdmin.POST("/:id/toggle", alertH.Toggle)
-		alertAdmin.POST("/:id/triggers/:tid/resolve", alertH.ResolveTrigger)
+		// ── Search ────────────────────────────────────────────────────────────────
+		protected.GET("/search/events", searchH.SearchEvents)
+		protected.GET("/search/groups", searchH.SearchGroups)
+		protected.GET("/search/groups/:id/events", searchH.GetGroupEvents)
+
+		// ── Incidents ─────────────────────────────────────────────────────────────
+		protected.GET("/incidents", incidentH.List)
+		protected.GET("/incidents/:id", incidentH.Get)
+		protected.GET("/incidents/:id/frequency", incidentH.GetFrequency)
+
+		protected.POST("/incidents", incidentH.Create)
+		protected.PATCH("/incidents/:id", incidentH.Update)
+		protected.DELETE("/incidents/:id", incidentH.Delete)
+		protected.POST("/incidents/:id/timeline", incidentH.AddTimeline)
+		protected.POST("/incidents/:id/error-groups", incidentH.LinkErrorGroup)
+		protected.DELETE("/incidents/:id/error-groups/:egid", incidentH.UnlinkErrorGroup)
+
+		// ── Alerts ────────────────────────────────────────────────────────────────
+		protected.GET("/alerts", alertH.List)
+		protected.GET("/alerts/:id", alertH.Get)
+		protected.GET("/alerts/:id/triggers", alertH.ListTriggers)
+
+		protected.POST("/alerts", alertH.Create)
+		protected.PATCH("/alerts/:id", alertH.Update)
+		protected.DELETE("/alerts/:id", alertH.Delete)
+		protected.POST("/alerts/:id/toggle", alertH.Toggle)
+		protected.POST("/alerts/:id/triggers/:tid/resolve", alertH.ResolveTrigger)
 	}
 
 	return r

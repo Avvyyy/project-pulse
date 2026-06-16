@@ -22,7 +22,8 @@ func NewAPIKeyHandler(repo *repository.APIKeyRepo, rdb *redisclient.Client) *API
 }
 
 func (h *APIKeyHandler) List(c *gin.Context) {
-	keys, err := h.repo.List(c.Request.Context())
+	userID := c.GetString("userID")
+	keys, err := h.repo.List(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -49,7 +50,8 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		return
 	}
 
-	key, err := h.repo.Create(c.Request.Context(), body.Name, keyHash, body.RateLimitPerMinute)
+	userID := c.GetString("userID")
+	key, err := h.repo.Create(c.Request.Context(), userID, body.Name, keyHash, body.RateLimitPerMinute)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -69,8 +71,9 @@ func (h *APIKeyHandler) Delete(c *gin.Context) {
 		h.rdb.InvalidateAPIKey(c.Request.Context(), hash)
 	}
 
-	if err := h.repo.Delete(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "api key not found"})
+	userID := c.GetString("userID")
+	if err := h.repo.Delete(c.Request.Context(), userID, id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "api key not found or unauthorized"})
 		return
 	}
 	c.Status(http.StatusNoContent)
