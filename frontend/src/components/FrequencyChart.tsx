@@ -7,13 +7,15 @@ import { LEVEL_HEX } from '../utils/colors';
 import { formatDateTimeShort } from '../utils/time';
 
 function pivot(points: FrequencyPoint[]) {
-  const map = new Map<string, Record<string, number> & { bucket: string }>();
+  // rows need a `bucket` string plus numeric counts per level.
+  const map = new Map<string, { bucket: string; [key: string]: number | string }>();
   const levels = new Set<string>();
 
   for (const { bucket, level, count } of points) {
     levels.add(level);
     if (!map.has(bucket)) map.set(bucket, { bucket });
-    map.get(bucket)![level] = (map.get(bucket)![level] ?? 0) + count;
+    const row = map.get(bucket)!;
+    row[level] = (Number(row[level]) || 0) + count;
   }
 
   return { rows: Array.from(map.values()), levels: Array.from(levels) };
