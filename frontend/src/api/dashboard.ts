@@ -35,6 +35,7 @@ export interface TopErrorGroup {
   service:         string;
   level:           string;
   occurrenceCount: number;
+  firstSeenAt:     string;
   lastSeenAt:      string;
 }
 
