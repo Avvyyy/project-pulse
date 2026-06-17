@@ -74,7 +74,7 @@ services:
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
-      - ./backend:/app
+      # Development volume mount removed for production. Use docker-compose.prod.yml for prod.
       # Keep the module cache across rebuilds
       - go_pkg_cache:/root/go/pkg/mod
 

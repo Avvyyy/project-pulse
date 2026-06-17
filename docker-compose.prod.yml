@@ -22,7 +22,10 @@ services:
 
   backend:
     build:
+      context: .
+      dockerfile: Dockerfile
       target: backend-prod
+    image: project-pulse-backend:latest
     restart: always
     volumes: []
     environment:
@@ -35,7 +38,10 @@ services:
 
   frontend:
     build:
+      context: .
+      dockerfile: Dockerfile
       target: frontend-prod
+    image: project-pulse-frontend:latest
     restart: always
     volumes: []
     ports:
