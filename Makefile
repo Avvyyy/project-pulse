@@ -52,11 +52,21 @@ lint:          ## Run go vet
 	$(COMPOSE) exec backend go vet ./...
 
 # ── Production ────────────────────────────────────────────────────────────
+prod-build:    ## Rebuild images from scratch
+	$(COMPOSE_PROD) build --no-cache
+
 prod-up:       ## Start production stack
 	$(COMPOSE_PROD) up -d
 
 prod-down:     ## Stop production stack
 	$(COMPOSE_PROD) down
+
+prod-logs:       ## Follow logs (all prod services)
+	$(COMPOSE_PROD) logs -f
+
+prod-logs-backend: ## Follow backend logs (prod)
+	$(COMPOSE_PROD) logs -f backend
+
 
 # ── Utilities ─────────────────────────────────────────────────────────────
 clean:         ## Remove containers and volumes

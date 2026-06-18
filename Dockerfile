@@ -41,7 +41,6 @@ FROM frontend-base AS frontend-builder
 COPY frontend/ .
 RUN npm run build
 
-FROM nginx:alpine AS frontend-prod
-COPY --from=frontend-builder /app/dist       /usr/share/nginx/html
-COPY frontend/nginx/default.conf             /etc/nginx/conf.d/default.conf
+FROM caddy:2-alpine AS frontend-prod
+COPY --from=frontend-builder /app/dist /srv
 EXPOSE 80

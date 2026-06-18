@@ -36,14 +36,21 @@ services:
       - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
       - xpack.security.enabled=true
 
-  frontend:
+  caddy:
     build:
       context: .
       dockerfile: Dockerfile
       target: frontend-prod
-    image: project-pulse-frontend:latest
     restart: always
-    volumes: []
     ports:
       - "80:80"
       - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    depends_on:
+      - backend
+
+volumes:
+  caddy_data:
+  postgres_data:
